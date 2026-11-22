@@ -1,9 +1,11 @@
 """Gimbal bracket with a flat underside below the frame and both arms."""
 
+from dataclasses import replace
+
 from build123d import Plane, Shape, Solid, section
 
 from argus.models.bracket import (
-    CUT_OVERLAP, BracketParameters, build_bracket_features, resolve_bracket_features,
+    CUT_OVERLAP, BracketParameters, build_bracket_features, cut_horn_seat, resolve_bracket_features,
 )
 from argus.models.common import Outline, Prism
 
@@ -33,6 +35,6 @@ def _underside_fill(parameters: BracketParameters, frame: Shape) -> Shape:
 
 def build_print_bracket(parameters: BracketParameters):
     features = resolve_bracket_features(parameters)
-    bracket = build_bracket_features(features)
+    bracket = build_bracket_features(replace(features, horn_cutouts=()))
     fill = _underside_fill(parameters, features.frame).cut(features.window, *features.arm_cutouts)
-    return bracket.fuse(*fill.solids())
+    return cut_horn_seat(bracket.fuse(*fill.solids()), features.horn_cutouts)

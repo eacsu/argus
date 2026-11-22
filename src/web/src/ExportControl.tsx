@@ -1,24 +1,25 @@
 import { AlertCircle, Download, X } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { exportFormats, ExportRequestError, requestExport, type ExportFormat } from './export'
-import type { Model, ModelId, Preview } from './preview'
+import { exportFormats, ExportRequestError, requestExport, type ExportFormat, type ExportId } from './export'
+import type { Preview } from './preview'
 import './export.css'
 
 interface ExportControlProps {
-  current: ModelId
-  models: Model[]
-  previewParameters: (id: ModelId) => Preview['parameters'] | undefined
+  initialSelection: ExportId[]
+  models: { id: ExportId; name: string }[]
+  previewParameters: (id: ExportId) => Preview['parameters'] | undefined
+  availableFormats?: readonly ExportFormat[]
 }
 
 function toggleSelection<T>(values: T[], value: T, checked: boolean): T[] {
   return checked ? [...values, value] : values.filter((entry) => entry !== value)
 }
 
-export function ExportControl({ current, models, previewParameters }: ExportControlProps) {
+export function ExportControl({ initialSelection, models, previewParameters, availableFormats = exportFormats }: ExportControlProps) {
   const dialog = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const pending = useRef<AbortController | null>(null)
-  const [modelIds, setModelIds] = useState<ModelId[]>([])
+  const [modelIds, setModelIds] = useState<ExportId[]>([])
   const [formats, setFormats] = useState<ExportFormat[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -27,8 +28,8 @@ export function ExportControl({ current, models, previewParameters }: ExportCont
   useEffect(() => () => pending.current?.abort(), [])
 
   function open() {
-    setModelIds([current])
-    setFormats(['3mf'])
+    setModelIds(initialSelection)
+    setFormats([availableFormats.includes('3mf') ? '3mf' : availableFormats[0]])
     setError('')
     dialog.current?.showModal()
   }
@@ -46,7 +47,7 @@ export function ExportControl({ current, models, previewParameters }: ExportCont
     const selectedModels = models.filter(({ id }) => modelIds.includes(id)).map(({ id }) => ({
       id, parameters: previewParameters(id),
     }))
-    const selectedFormats = exportFormats.filter((format) => formats.includes(format))
+    const selectedFormats = availableFormats.filter((format) => formats.includes(format))
     const request = new AbortController()
     pending.current = request
     setBusy(true)
@@ -104,7 +105,7 @@ export function ExportControl({ current, models, previewParameters }: ExportCont
           <fieldset className="export-group" disabled={busy}>
             <legend>文件格式</legend>
             <div className="export-formats">
-              {exportFormats.map((format) => (
+              {availableFormats.map((format) => (
                 <label key={format}>
                   <input type="checkbox" checked={formats.includes(format)}
                     onChange={(event) => setFormats(toggleSelection(formats, format, event.target.checked))} />

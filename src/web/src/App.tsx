@@ -1,9 +1,11 @@
 import { AlertCircle, Check, Clock, LoaderCircle } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { BASE_EXPORTS, BASE_VIEWS, basePreview, type BaseView } from './assembly'
+import type { ExportId } from './export'
 import { ExportControl } from './ExportControl'
 import { GenerateButton, Inspector, type InspectorProps } from './Inspector'
-import { defaults, generate, getModels, parseDraft, PreviewError, type Draft, type Model, type ModelId, type Preview } from './preview'
-import { followModelLink, modelPath, useModelPath } from './routing'
+import { changeDraft, defaults, generate, getModels, parseDraft, PreviewError, stateModel, type Draft, type Model, type ModelId, type Preview } from './preview'
+import { DEFAULT_MODEL, followModelLink, modelPath, useModelPath } from './routing'
 import { Viewport } from './Viewport'
 
 interface ModelState {
@@ -26,6 +28,7 @@ function App() {
   const [catalogError, setCatalogError] = useState(false)
   const [catalogAttempt, retryCatalog] = useState(0)
   const [states, setStates] = useState<Partial<Record<ModelId, ModelState>>>({})
+  const [baseView, setBaseView] = useState<BaseView>('closed')
   const inFlight = useRef(new Set<ModelId>())
   const dialog = useRef<HTMLDialogElement>(null)
   const parametersButton = useRef<HTMLButtonElement>(null)
@@ -33,20 +36,21 @@ function App() {
   const pathname = useModelPath()
 
   const renderModel = useCallback((model: Model, draft: Draft) => {
-    if (inFlight.current.has(model.id)) return
+    const id = stateModel(model.id)
+    if (inFlight.current.has(id)) return
     const { values, errors } = parseDraft(model, draft)
     if (Object.keys(errors).length) return
-    inFlight.current.add(model.id)
-    void generate(model.id, values).then((preview) => {
-      if (preview.model !== model.id) throw new PreviewError('返回结果与零件不匹配，请重试。')
-      setStates((current) => ({ ...current, [model.id]: { draft, status: 'ready', preview } }))
+    inFlight.current.add(id)
+    void generate(id, values).then((preview) => {
+      if (preview.model !== id) throw new PreviewError('返回结果与零件不匹配，请重试。')
+      setStates((current) => ({ ...current, [id]: { draft, status: 'ready', preview } }))
     }).catch((error: unknown) => {
       const failure = error instanceof PreviewError ? error : new PreviewError('无法连接到生成服务，请重试。')
       setStates((current) => ({
-        ...current, [model.id]: { ...current[model.id], draft, status: 'failed', error: failure },
+        ...current, [id]: { ...current[id], draft, status: 'failed', error: failure },
       }))
     }).finally(() => {
-      inFlight.current.delete(model.id)
+      inFlight.current.delete(id)
     })
   }, [])
 
@@ -61,7 +65,8 @@ function App() {
   }, [catalogAttempt])
 
   const model = models.find((entry) => modelPath(entry.id) === pathname)
-  const savedState = model && states[model.id]
+  const stateId = model && stateModel(model.id)
+  const savedState = stateId && states[stateId]
   useEffect(() => {
     if (model && !savedState) renderModel(model, defaults(model))
   }, [model, savedState, renderModel])
@@ -79,32 +84,35 @@ function App() {
   const errors = { ...state?.error?.fields, ...parsed.errors }
   const isBuilding = state?.status === 'building'
   const result = state?.preview
+  const splitBase = model?.id === 'base-split'
+  const entireAssembly = model?.id === 'gimbal-assembly'
+  const displayed = useMemo(() => splitBase && result ? basePreview(result, baseView) : result, [splitBase, result, baseView])
   const different = Boolean(result && model?.fields.some((field) => parsed.values[field.key] !== result.parameters[field.key]))
   const canGenerate = Boolean(state && !isBuilding && !Object.keys(parsed.errors).length &&
     (different || !result || state.error))
   const canReset = Boolean(model && modelDraft &&
     model.fields.some((field) => modelDraft[field.key] !== String(field.default)))
-  const dimensions = result?.bounds.max.map((max, index) => number.format(max - result.bounds.min[index])).join(' × ')
+  const dimensions = displayed?.bounds.max.map((max, index) => number.format(max - displayed.bounds.min[index])).join(' × ')
 
   function updateDraft(update: (draft: Draft) => Draft) {
-    if (!model) return
+    if (!stateId) return
     setStates((current) => {
-      const entry = current[model.id]
+      const entry = current[stateId]
       if (!entry) return current
-      return { ...current, [model.id]: { ...entry, error: undefined, draft: update(entry.draft) } }
+      return { ...current, [stateId]: { ...entry, error: undefined, draft: update(entry.draft) } }
     })
   }
 
   const inspector: Omit<InspectorProps, 'generate'> | undefined = model && modelDraft ? {
     model, draft: modelDraft, errors,
     building: isBuilding, canGenerate, canReset,
-    change: (key, value) => updateDraft((draft) => ({ ...draft, [key]: value })),
+    change: (key, value) => updateDraft((draft) => changeDraft(model, draft, key, value)),
     reset: () => updateDraft(() => defaults(model)),
   } : undefined
   function submitPreview() {
-    if (!model || !modelDraft || !canGenerate || inFlight.current.has(model.id)) return
+    if (!model || !stateId || !modelDraft || !canGenerate || inFlight.current.has(stateId)) return
     setStates((current) => ({
-      ...current, [model.id]: { ...current[model.id], draft: modelDraft, status: 'building', error: undefined },
+      ...current, [stateId]: { ...current[stateId], draft: modelDraft, status: 'building', error: undefined },
     }))
     renderModel(model, modelDraft)
   }
@@ -130,17 +138,31 @@ function App() {
     </>
   )
 
+  const exportModels = splitBase ? BASE_EXPORTS : entireAssembly ? [{ id: 'gimbal-assembly' as const, name: '整机装配' }] :
+    models.filter((entry) => entry.id !== 'base-split' && entry.id !== 'gimbal-assembly')
+  const initialExport: ExportId[] = splitBase
+    ? baseView === 'closed' ? BASE_EXPORTS.map(({ id }) => id) : [baseView === 'upper' ? 'base-upper' : 'base-lower']
+    : model ? [model.id] : []
+
+  function exportParameters(id: ExportId) {
+    if (id === 'base-lower' || id === 'base-upper' || id === 'gimbal-assembly') return states['base-split']?.preview?.parameters
+    return states[id]?.preview?.parameters
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <span className="brand-name">Argus</span>
+        <div className="brand">
+          <img src="/argus-mark.svg" width="24" height="24" alt="" />
+          <span>Argus</span>
+        </div>
         <span className="workspace-name">模型工作台</span>
       </header>
 
       {!model || !inspector ? (
         <main className="catalog-state">
           <p role="status">{missingModel ? '找不到此零件。' : catalogError ? '无法加载模型列表。' : '正在加载模型…'}</p>
-          {missingModel && <a className="secondary-button" href={modelPath('base')} onClick={followModelLink}>返回底座</a>}
+          {missingModel && <a className="secondary-button" href={modelPath(DEFAULT_MODEL)} onClick={followModelLink}>返回底座</a>}
           {catalogError && <button className="secondary-button" onClick={() => {
             setCatalogError(false)
             retryCatalog((attempt) => attempt + 1)
@@ -165,7 +187,8 @@ function App() {
                 <p className="dimensions" data-testid="model-dimensions">{dimensions ? dimensions + ' mm' : '外形尺寸待生成'}</p>
               </div>
               <div className="preview-heading-actions">
-                <ExportControl current={model.id} models={models} previewParameters={(id) => states[id]?.preview?.parameters} />
+                <ExportControl key={model.id} initialSelection={initialExport} models={exportModels}
+                  previewParameters={exportParameters} availableFormats={entireAssembly ? ['step'] : undefined} />
                 {narrow && <button type="button" className="secondary-button" ref={parametersButton} aria-haspopup="dialog"
                   onClick={() => dialog.current?.showModal()}>参数</button>}
               </div>
@@ -173,7 +196,11 @@ function App() {
 
             <div className="model-workspace">
               <div className="preview-area">
-                <Viewport key={model.id} name={model.name} preview={result} loading={isBuilding} status={statusContent} />
+                {splitBase && <div className="assembly-views" role="group" aria-label="底座视图">
+                  {BASE_VIEWS.map(({ value, name }) => <button key={value} type="button" className="text-button"
+                    aria-pressed={baseView === value} onClick={() => setBaseView(value)}>{name}</button>)}
+                </div>}
+                <Viewport key={model.id} name={model.name} preview={displayed} loading={isBuilding} status={statusContent} />
                 {narrow && <div className="mobile-generate">
                   <GenerateButton building={isBuilding} disabled={!canGenerate} onClick={submitPreview} />
                 </div>}

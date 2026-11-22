@@ -1,7 +1,14 @@
 """Dimensions that can be edited in a model preview."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
+
+
+@dataclass(frozen=True)
+class PreviewChoice:
+    value: int
+    label: str
+    defaults: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -13,6 +20,8 @@ class PreviewField:
     minimum: float
     maximum: float
     unit: str = "mm"
+    choices: tuple[PreviewChoice, ...] = ()
+    active_when: tuple[str, int] | None = None
 
 
 class PreviewParameterError(ValueError):
@@ -24,9 +33,26 @@ class PreviewParameterError(ValueError):
 def resolve_fields(fields: tuple[PreviewField, ...], changes: dict) -> dict[str, float]:
     known = {field.key for field in fields}
     errors = {key: "未知参数。" for key in changes.keys() - known}
+    defaults = {field.key: field.default for field in fields}
+    for field in fields:
+        if not field.choices:
+            continue
+        value = changes.get(field.key, field.default)
+        choice = next((choice for choice in field.choices if type(value) in (int, float) and value == choice.value), None)
+        if choice is None:
+            errors[field.key] = "请选择列表中的型号。"
+        else:
+            defaults.update(choice.defaults)
     values = {}
     for field in fields:
-        value = changes.get(field.key, field.default)
+        if field.key in errors:
+            continue
+        if field.active_when:
+            key, required = field.active_when
+            if changes.get(key, defaults[key]) != required:
+                values[field.key] = field.default
+                continue
+        value = changes.get(field.key, defaults[field.key])
         if (
             type(value) not in (int, float)
             or not field.minimum <= value <= field.maximum

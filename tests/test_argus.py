@@ -11,14 +11,24 @@ from typer.testing import CliRunner
 
 from argus.assembly import BASE, BRACKET, PARTS
 from argus.commands.app import app
+from argus.exporting import stage_assembly
 from argus.models.base import build_base
-from argus.models.base.parameters import BASE_PARAMETERS
+from argus.models.base.parameters import BASE_PARAMETERS, BASE_POSE
+from argus.models.base_servo import build_servo_base
+from argus.models.base_servo.parameters import HORN_PARAMETERS, LONG_HORN_SEAT, LONG_SERVO_BASE_PARAMETERS, SERVO_BASE_PARAMETERS, HornProfile
+from argus.models.base_split import BaseConnection
+from argus.models.base_split.parameters import default_base
 from argus.models.bracket import build_bracket
 from argus.models.bracket.parameters import BRACKET_PARAMETERS
 from argus.models.bracket_print import build_print_bracket
+from argus.models.common import X, Prism, box_at, cylinder
+from argus.models.gimbal import gimbal_parts
 from argus.models.head import build_head
 from argus.models.head.parameters import HEAD_PARAMETERS
 from argus.models.head_print import build_print_head
+from argus.models.servo_horn import build_servo_horn, horn_outline
+from argus.models.servo_horn.parameters import LONG_HORN_PARAMETERS, SERVO_HORN_PARAMETERS
+from argus.models.servo_horn.single import SINGLE_HORN, build_single_horn, outline as single_horn_outline
 from argus.workflow import export_reference_parts
 
 
@@ -70,7 +80,7 @@ class TestArgus(unittest.TestCase):
             self.assertEqual(result.exit_code, 1, result.output)
             self.assertIn("「舵机云台-1」应有一件，实际找到 0 件", result.output)
 
-    def test_main_exports_all_three_parts_without_source(self):
+    def test_main_exports_default_base_and_horn_with_structure_without_source(self):
         runner = CliRunner()
         with (
             TemporaryDirectory() as directory,
@@ -82,9 +92,8 @@ class TestArgus(unittest.TestCase):
             output = Path("exports")
             result = runner.invoke(app, ["--output-dir", str(output)])
             self.assertEqual(result.exit_code, 0, result.output)
-            self.assertEqual(len(list(output.iterdir())), 6)
-            for spec in PARTS:
-                name = spec.output_stem
+            self.assertEqual(len(list(output.iterdir())), 14)
+            for name in ("gimbal_base_lower", "gimbal_base_upper", "gimbal_bracket", "gimbal_head", "servo_horn_long", "servo_horn_single"):
                 with self.subTest(part=name):
                     exported = import_step(output / f"{name}.step")
                     self.assertEqual(len(exported.solids()), 1)
@@ -95,6 +104,99 @@ class TestArgus(unittest.TestCase):
                     self.assertGreater(reader.triangle_counts[0], 0)
                     self.assertAlmostEqual(meshes[0].bounding_box().min.Z, 0, delta=0.02)
             read_source.assert_not_called()
+
+    def test_split_base_holds_both_horns_and_the_m3_screws_are_recessed(self):
+        for profile in HornProfile:
+            with self.subTest(profile=profile):
+                base = default_base(profile, BaseConnection.M3)
+                parts = gimbal_parts(profile, base)
+                lower, upper, horn, servo = [part.local_shape.moved(BASE_POSE.inverse() * part.assembly_pose) for part in parts[:4]]
+                for first, second in ((lower, upper), (lower, horn), (upper, horn), (lower, servo), (upper, servo), (horn, servo)):
+                    self.assertLess(sum(shape.volume for shape in first.intersect(second) or []), 1e-5)
+                hardware = base.fasteners
+                reach = hardware.thread_reach(base.lower_thickness)
+                for index, (x, y) in enumerate(base.bolt_centers()):
+                    bolt, insert = [part.local_shape.moved(BASE_POSE.inverse() * part.assembly_pose)
+                                    for part in parts[8 + 2 * index:10 + 2 * index]]
+                    self.assertGreater(bolt.bounding_box().min.Z, 0)
+                    self.assertAlmostEqual(bolt.bounding_box().max.Z, base.lower_thickness + reach)
+                    self.assertAlmostEqual(insert.bounding_box().min.Z, base.lower_thickness)
+                    self.assertGreaterEqual(reach, hardware.insert_length)
+                    self.assertLess(reach, hardware.pilot_depth)
+                    self.assertFalse(lower.is_inside((x + 2.5, y, 1)))
+                    self.assertTrue(lower.is_inside((x + 2.5, y, 4)))
+                    self.assertFalse(upper.is_inside((x + 1.9, y, base.lower_thickness + 1)))
+                    self.assertTrue(upper.is_inside((x, y, base.lower_thickness + 4.5)))
+                    for layer in (lower, upper):
+                        self.assertLess(sum(shape.volume for shape in bolt.intersect(layer) or []), 1e-5)
+
+    def test_default_snap_base_captures_each_horn_and_blocks_a_straight_pull(self):
+        for profile in HornProfile:
+            with self.subTest(profile=profile):
+                base = default_base(profile)
+                parts = gimbal_parts(profile, base)
+                self.assertEqual(len(parts), 8)
+                self.assertEqual(parts[1].spec.print_rotation, (180, 0, 0))
+                lower, upper, horn, servo = [part.local_shape.moved(BASE_POSE.inverse() * part.assembly_pose) for part in parts[:4]]
+                for layer in (lower, upper):
+                    self.assertTrue(layer.is_valid)
+                    self.assertEqual(len(layer.solids()), 1)
+                for first, second in ((lower, upper), (lower, horn), (upper, horn), (lower, servo), (upper, servo)):
+                    self.assertLess(sum(shape.volume for shape in first.intersect(second) or []), 1e-5)
+                lifted = upper.moved(Pos(0, 0, 0.5))
+                self.assertGreater(sum(shape.volume for shape in lower.intersect(lifted) or []), 2.0)
+
+                snap = base.snap_fit
+                engagement = snap.hook_outer - snap.stem_outer - snap.clearance
+                travel = engagement + 0.05
+                self.assertGreater(snap.inward_travel, travel)
+                released_hook = box_at(
+                    (snap.stem_inner - travel, snap.hook_start, -snap.tip_depth),
+                    (snap.hook_outer - snap.stem_inner, snap.hook_end - snap.hook_start, snap.tip_depth + 1),
+                )
+                for rim, _ in snap._placements(base.center, base.plate_side, base.lower_thickness):
+                    sweep = rim * released_hook
+                    self.assertLess(sum(shape.volume for shape in lower.intersect(sweep) or []), 1e-5)
+
+    def test_assembly_step_retains_every_named_occurrence(self):
+        with TemporaryDirectory() as directory:
+            for connection, count in ((BaseConnection.SNAP, 8), (BaseConnection.M3, 16)):
+                with self.subTest(connection=connection):
+                    parts = gimbal_parts(HornProfile.EQUAL, default_base(HornProfile.EQUAL, connection))
+                    path = stage_assembly(parts, Path(directory) / f"gimbal_{connection}.step")
+                    children = import_step(path).children
+                    self.assertEqual(len(children), count)
+                    self.assertCountEqual([child.label for child in children], [part.spec.output_stem for part in parts])
+
+    def test_single_horn_fits_both_brackets_and_the_upper_output_shaft(self):
+        horn = build_single_horn()
+        dimensions = horn.bounding_box().size
+        for actual, expected in zip(dimensions, (21.3, 6.76, 4.82)):
+            self.assertAlmostEqual(actual, expected)
+        holes = SINGLE_HORN.arm_holes()
+        self.assertAlmostEqual(holes[-1] - holes[-2], 2.43)
+        p = BRACKET_PARAMETERS
+        installed = p.horn_seat.horn_pose(p.right_arm_x, p.shaft_axis)
+        distal = (installed * Pos(holes[-2], 0, 0)).position
+        stroke = SINGLE_HORN.overall_height + p.horn_seat.pocket_depth + 1
+        arm_sweep = Solid.extrude(Face(single_horn_outline(SINGLE_HORN)), (0, 0, -stroke)).moved(
+            installed * Pos(0, 0, SINGLE_HORN.arm_thickness),
+        )
+        hub_start = (installed * Pos(0, 0, SINGLE_HORN.overall_height)).position
+        hub_sweep = cylinder(SINGLE_HORN.hub_diameter / 2, hub_start, X, stroke)
+        for builder in (build_bracket, build_print_bracket):
+            with self.subTest(bracket=builder.__name__):
+                part = builder(p)
+                self.assertTrue(part.is_valid)
+                self.assertFalse(part.is_inside((17, distal.Y, distal.Z)))
+                self.assertFalse(part.is_inside((17, *p.shaft_axis)))
+                for sweep in (arm_sweep, hub_sweep):
+                    self.assertLess(sum(s.volume for s in part.intersect(sweep) or []), 1e-6)
+
+        parts = gimbal_parts(HornProfile.LONG, default_base(HornProfile.LONG))
+        shapes = {part.spec.output_stem: part.local_shape.moved(part.assembly_pose) for part in parts}
+        installed_horn = shapes["servo_horn_single"]
+        self.assertLess(sum(s.volume for s in installed_horn.intersect(shapes["sg90s_top"]) or []), 1e-6)
 
     def test_base_plate_and_bores_are_quarter_turn_symmetric_about_ring(self):
         part = build_base(BASE_PARAMETERS)
@@ -113,6 +215,101 @@ class TestArgus(unittest.TestCase):
                 rotated = turn * profile
                 for a, b in ((profile, rotated), (rotated, profile)):
                     self.assertLess(sum(face.area for face in a.cut(b).faces()), 1e-6)
+
+    def test_servo_base_has_two_seating_depths_and_symmetric_through_holes(self):
+        base, horn = SERVO_BASE_PARAMETERS, HORN_PARAMETERS
+        part = build_servo_base(base, horn)
+        self.assertTrue(part.is_valid)
+        self.assertEqual(len(part.solids()), 1)
+        bounds = part.bounding_box()
+        x, y = base.ring.center
+        self.assertAlmostEqual(bounds.size.X, 42)
+        self.assertAlmostEqual(bounds.size.Y, 42)
+        self.assertAlmostEqual(bounds.max.Z, BASE_PARAMETERS.plate_thickness + BASE_PARAMETERS.ring.height, places=5)
+        turn = Pos(x, y, 0) * Rot(0, 0, 90) * Pos(-x, -y, 0)
+        self.assertLess(sum(solid.volume for solid in part.cut(turn * part).solids()), 1e-6)
+
+        arm_floor = base.plate_thickness - horn.arm_depth
+        hub_floor = base.plate_thickness - horn.hub_depth
+        profile = section(part, section_by=Plane((0, 0, arm_floor + 0.1)))
+        pocket = max(profile.faces()[0].inner_wires(), key=lambda wire: wire.length)
+        self.assertAlmostEqual(pocket.bounding_box().size.X, horn.envelope.main_arm.span + 2 * horn.clearance)
+        self.assertAlmostEqual(pocket.bounding_box().size.Y, horn.envelope.main_arm.span + 2 * horn.clearance)
+        for offset, depth in ((6, arm_floor), (2.5, hub_floor)):
+            self.assertTrue(part.is_inside((x + offset, y, depth - 0.01)))
+            self.assertFalse(part.is_inside((x + offset, y, depth + 0.01)))
+        for dx, dy in ((0.0, 0.0), *horn.mounting_offsets()):
+            self.assertFalse(part.is_inside((x + dx, y + dy, 1.0)))
+
+    def test_servo_horn_has_symmetric_holes_and_can_drop_into_base(self):
+        parameters = SERVO_HORN_PARAMETERS
+        envelope = parameters.envelope
+        horn = build_servo_horn(parameters)
+        self.assertTrue(horn.is_valid)
+        self.assertEqual(len(horn.solids()), 1)
+        bounds = horn.bounding_box()
+        self.assertAlmostEqual(bounds.size.X, 26.25)
+        self.assertAlmostEqual(bounds.size.Y, 26.25)
+        self.assertAlmostEqual(bounds.size.Z, 3.96)
+
+        profile = section(horn, section_by=Plane((0, 0, 0.5)))
+        holes = profile.faces()[0].inner_wires()
+        self.assertEqual(len(holes), 13)
+        expected = [(0, 0, 2.1)]
+        for offset in (5.8, 8.3, 10.8):
+            expected.extend((x, y, 1.2) for x, y in ((offset, 0), (0, offset), (-offset, 0), (0, -offset)))
+        actual = []
+        for wire in holes:
+            box = wire.bounding_box()
+            x, y, _ = box.center()
+            actual.append(tuple(round(value, 5) for value in (x, y, box.size.X)))
+        self.assertCountEqual(actual, expected)
+
+        self.assertLess(sum(solid.volume for solid in horn.cut(Rot(0, 0, 90) * horn).solids()), 1e-6)
+        base = build_servo_base(SERVO_BASE_PARAMETERS, HORN_PARAMETERS)
+        x, y = SERVO_BASE_PARAMETERS.ring.center
+        seat = SERVO_BASE_PARAMETERS.plate_thickness - HORN_PARAMETERS.arm_depth
+        insertion = Prism(horn_outline(envelope, (x, y), seat), (0, 0, base.bounding_box().max.Z)).build()
+        self.assertLess(sum(solid.volume for solid in base.intersect(insertion) or []), 1e-6)
+        for dx, dy in ((8.3, 0), (0, 8.3), (-8.3, 0), (0, -8.3)):
+            self.assertFalse(base.is_inside((x + dx, y + dy, seat - 0.5)))
+
+    def test_long_horn_has_matching_arm_pairs_and_fits_its_base(self):
+        horn = build_servo_horn(LONG_HORN_PARAMETERS)
+        bounds = horn.bounding_box()
+        self.assertTrue(horn.is_valid)
+        self.assertEqual(len(horn.solids()), 1)
+        for dimension, expected in zip(bounds.size, (19.8, 33.58, 4.62)):
+            self.assertAlmostEqual(dimension, expected)
+        profile = section(horn, section_by=Plane((0, 0, 0.5)))
+        self.assertEqual(len(profile.faces()[0].inner_wires()), 19)
+        self.assertLess(sum(solid.volume for solid in horn.cut(Rot(0, 0, 180) * horn).solids()), 1e-6)
+
+        base = build_servo_base(LONG_SERVO_BASE_PARAMETERS, LONG_HORN_SEAT)
+        self.assertTrue(base.is_valid)
+        self.assertEqual(len(base.solids()), 1)
+        x, y = LONG_SERVO_BASE_PARAMETERS.ring.center
+        seat = LONG_SERVO_BASE_PARAMETERS.plate_thickness - LONG_HORN_SEAT.arm_depth
+        insertion = Prism(horn_outline(LONG_HORN_PARAMETERS.envelope, (x, y), seat), (0, 0, 14)).build()
+        self.assertLess(sum(solid.volume for solid in base.intersect(insertion) or []), 1e-6)
+        for dx, dy in ((7.73, 0), (0, 12.97), (-7.73, 0), (0, -12.97)):
+            self.assertFalse(base.is_inside((x + dx, y + dy, 2)))
+            self.assertFalse(horn.is_inside((dx, dy, 1)))
+
+    @unittest.skipUnless(SOURCE.is_file(), "没有用于验证花键的参考装配")
+    def test_servo_horn_socket_engages_reference_shaft(self):
+        parameters = SERVO_HORN_PARAMETERS
+        horn = build_servo_horn(parameters)
+        x, y = BASE_PARAMETERS.ring.center
+        reference = import_step(SOURCE)
+        servo = next(node for node in reference.children if node.label == "servo-1").moved(BASE_POSE.inverse())
+        floor = parameters.envelope.overall_height - parameters.socket.depth
+        installed = servo.moved(Pos(-x, -y, floor - servo.bounding_box().min.Z))
+        self.assertLess(sum(solid.volume for solid in horn.intersect(installed) or []), 1e-6)
+        half_tooth = Rot(0, 0, 180 / parameters.socket.teeth) * installed
+        self.assertGreater(sum(solid.volume for solid in horn.intersect(half_tooth) or []), 0.1)
+        self.assertFalse(horn.is_inside((0, 0, floor / 2)))
+        self.assertTrue(horn.is_inside((1.5, 0, floor / 2)))
 
     def test_print_bracket_fills_the_underside_and_preserves_clearances(self):
         parameters = BRACKET_PARAMETERS

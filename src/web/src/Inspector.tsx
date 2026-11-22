@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import type { Draft, Model } from './preview'
+import { isFieldActive, type Draft, type Model } from './preview'
 
 export interface InspectorProps {
   model: Model
@@ -27,7 +27,8 @@ export function GenerateButton({ disabled, building, submit = false, onClick }: 
 }
 
 export function Inspector(props: InspectorProps & { close?: () => void }) {
-  const groups = Array.from(new Set(props.model.fields.map((field) => field.group)))
+  const fields = props.model.fields.filter((field) => isFieldActive(field, props.draft))
+  const groups = Array.from(new Set(fields.map((field) => field.group)))
   return (
     <form className="inspector" aria-labelledby="parameter-heading" noValidate
       onSubmit={(event) => { event.preventDefault(); if (props.canGenerate) props.generate() }}>
@@ -40,20 +41,26 @@ export function Inspector(props: InspectorProps & { close?: () => void }) {
         {groups.map((group) => (
           <fieldset className="parameter-group" key={group} disabled={props.building}>
             <legend>{group}</legend>
-            {props.model.fields.filter((field) => field.group === group).map((field) => {
+            {fields.filter((field) => field.group === group).map((field) => {
               const id = 'parameter-' + field.key
               const error = props.errors[field.key]
               return (
                 <div className="parameter" key={field.key}>
                   <div className="parameter-row">
                     <label htmlFor={id}>{field.label}</label>
-                    <div className="number-field" data-invalid={Boolean(error)}>
+                    {field.choices?.length ? (
+                      <select className="choice-field" id={id} value={props.draft[field.key]}
+                        onChange={(event) => props.change(field.key, event.target.value)}
+                        aria-invalid={Boolean(error)} aria-describedby={error ? id + '-error' : undefined}>
+                        {field.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                      </select>
+                    ) : <div className="number-field" data-invalid={Boolean(error)}>
                       <input id={id} type="number" inputMode="decimal" step="any"
                         min={field.minimum} max={field.maximum} value={props.draft[field.key]}
                         onChange={(event) => props.change(field.key, event.target.value)}
                         aria-invalid={Boolean(error)} aria-describedby={id + '-unit' + (error ? ' ' + id + '-error' : '')} />
                       <span id={id + '-unit'}>{field.unit}</span>
-                    </div>
+                    </div>}
                   </div>
                   {error && <p className="field-error" id={id + '-error'}>{error}</p>}
                 </div>

@@ -13,8 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from argus.assembly import PlacedPart
 from argus.exporting import ExportFormat, FormatExportError, stage_part
+from argus.models.base_split.parameters import FIELDS as ASSEMBLY_FIELDS
 from argus.models.catalog import MODELS as _MODELS, ConfiguredModel
 from argus.models.preview import PreviewParameterError, resolve_fields
+from argus.web.assembly_view import (
+    WORKSPACE_EXPORTS, WORKSPACE_VIEWS, assembly_preview, bounds_payload, export_assembly_selection, mesh_payload,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +38,7 @@ class ExportModelRequest(PreviewRequest):
 
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    models: list[ExportModelRequest] = Field(min_length=1, max_length=len(_MODELS))
+    models: list[ExportModelRequest] = Field(min_length=1, max_length=len(_MODELS) + len(WORKSPACE_EXPORTS))
     formats: list[ExportFormat] = Field(min_length=1, max_length=3)
 
 
@@ -54,7 +58,9 @@ def _build_shape(model: ConfiguredModel, values: dict[str, float]) -> Shape:
 
 @router.get("/models")
 def models():
-    return {"models": [
+    assembly_fields = [asdict(field) for field in ASSEMBLY_FIELDS]
+    workspaces = [{"id": key, "name": name, "fields": assembly_fields} for key, name in WORKSPACE_VIEWS.items()]
+    return {"models": workspaces + [
         {"id": key, "name": model.name, "fields": [asdict(field) for field in model.fields]}
         for key, model in _MODELS.items()
     ]}
@@ -62,15 +68,16 @@ def models():
 
 @router.post("/models/{model_id}/preview")
 def preview(model_id: str, request: PreviewRequest):
-    model = _model_or_404(model_id)
+    workspace = model_id in WORKSPACE_VIEWS
+    model = None if workspace else _model_or_404(model_id)
     try:
-        values = resolve_fields(model.fields, request.parameters)
         with _CAD_LOCK:
+            if model is None:
+                return assembly_preview(model_id, request.parameters)
+            values = resolve_fields(model.fields, request.parameters)
             shape = _build_shape(model, values)
-            bounds = shape.bounding_box()
-            vertices, triangles = shape.tessellate(0.05, 0.15)
-            if not vertices or not triangles:
-                raise ValueError("Preview mesh is empty")
+            mesh = mesh_payload(shape)
+            bounds = bounds_payload(shape)
     except PreviewParameterError as exc:
         raise HTTPException(422, detail={"message": str(exc), "fields": exc.fields}) from exc
     except Exception as exc:
@@ -80,11 +87,8 @@ def preview(model_id: str, request: PreviewRequest):
     return {
         "model": model_id,
         "parameters": values,
-        "mesh": {
-            "positions": [value for vertex in vertices for value in vertex],
-            "indices": [index for triangle in triangles for index in triangle],
-        },
-        "bounds": {"min": tuple(bounds.min), "max": tuple(bounds.max)},
+        "mesh": mesh,
+        "bounds": bounds,
     }
 
 
@@ -95,11 +99,29 @@ def export_models(request: ExportRequest) -> Response:
         raise HTTPException(422, detail={"message": "零件和格式不能重复选择。"})
 
     formats = tuple(request.formats)
-    selections = [(entry, _model_or_404(entry.id)) for entry in request.models]
+    workspace_entries = [entry for entry in request.models if entry.id in WORKSPACE_EXPORTS]
+    selections = [(entry, _model_or_404(entry.id)) for entry in request.models if entry.id not in WORKSPACE_EXPORTS]
+    if "gimbal-assembly" in ids and formats != ("step",):
+        raise HTTPException(422, detail={"message": "整机装配支持 STEP 导出。"})
     try:
         with TemporaryDirectory(prefix="argus-export-") as directory:
             staging = Path(directory)
             files = []
+            if workspace_entries:
+                try:
+                    configurations = [resolve_fields(ASSEMBLY_FIELDS, entry.parameters) for entry in workspace_entries]
+                    values = configurations[0]
+                    if any(configuration != values for configuration in configurations[1:]):
+                        raise HTTPException(422, detail={"message": "分体底座和整机请使用同一组参数。"})
+                    with _CAD_LOCK:
+                        files.extend(export_assembly_selection(ids & WORKSPACE_EXPORTS, values, formats, staging))
+                except PreviewParameterError as exc:
+                    raise HTTPException(422, detail={"message": str(exc), "fields": exc.fields}) from exc
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    logger.exception("Gimbal export failed")
+                    raise HTTPException(500, detail={"message": "分体底座或整机导出失败，请重试。"}) from exc
             for entry, model in selections:
                 try:
                     values = resolve_fields(model.fields, entry.parameters)

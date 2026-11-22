@@ -2,9 +2,10 @@ import type { ModelId, Preview } from './preview'
 
 export const exportFormats = ['step', '3mf', 'stl'] as const
 export type ExportFormat = typeof exportFormats[number]
+export type ExportId = ModelId | 'base-lower' | 'base-upper'
 
 export interface ExportModel {
-  id: ModelId
+  id: ExportId
   parameters?: Preview['parameters']
 }
 

@@ -12,6 +12,7 @@ FIELDS = (
     PreviewField("window_height", "安装窗高", "安装窗", BRACKET_PARAMETERS.window_height, 16, 28),
     PreviewField("pin_diameter", "定位销直径", "定位销", 2 * BRACKET_PARAMETERS.pin_radius, 3, 5),
     PreviewField("pin_depth", "定位销伸出量", "定位销", BRACKET_PARAMETERS.pin_depth, 1.5, 4),
+    PreviewField("horn_clearance", "舵盘槽单边间隙", "舵盘槽", BRACKET_PARAMETERS.horn_seat.side_clearance, 0.1, 0.4),
 )
 
 
@@ -22,6 +23,7 @@ def preview_parameters(values: dict[str, float]) -> BracketParameters:
         window_height=values["window_height"],
         pin_radius=values["pin_diameter"] / 2,
         pin_depth=values["pin_depth"],
+        horn_seat=replace(BRACKET_PARAMETERS.horn_seat, side_clearance=values["horn_clearance"]),
     )
 
 

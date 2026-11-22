@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from math import sqrt
 
-from build123d import GeomType, Plane, Solid
+from build123d import Axis, GeomType, Plane, Solid
 
 from argus.models.common import FEATURE_EPSILON, X, Z, Outline, Prism, box_at, cylinder
 
@@ -101,7 +101,10 @@ def build_base(parameters: BaseParameters):
     return build_base_features(plate, parameters.ring, holes)
 
 
-def build_base_features(plate_profile: Prism, ring: RingParameters, holes: tuple[MountingHole, ...]):
+def build_base_features(
+    plate_profile: Prism, ring: RingParameters, holes: tuple[MountingHole, ...],
+    *, ring_slot_turns: tuple[int, ...] = (0,),
+):
     """Build a base from its resolved plate profile, ring and individual holes."""
     plate = plate_profile.build()
     thickness = plate_profile.direction[2]
@@ -128,7 +131,10 @@ def build_base_features(plate_profile: Prism, ring: RingParameters, holes: tuple
     radius = ring.slot_radius
     rounded = cylinder(radius, (x0, y, z), X, width)
     opening = box_at((x0, y - radius, z), (width, 2 * radius, bounds.max.Z - z + 1))
-    part -= rounded + opening
+    slot = rounded + opening
+    axis = Axis(ring_origin, Z)
+    for turn in ring_slot_turns:
+        part -= slot if turn == 0 else slot.rotate(axis, turn * 90)
 
     for hole in holes:
         start = (hole.x, hole.y, plate_bottom - 1)

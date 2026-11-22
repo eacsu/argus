@@ -1,6 +1,7 @@
 """Place, write and verify a structural part's export files."""
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
@@ -143,3 +144,37 @@ def stage_part(
             spec.output_stem, step_volume, triangles, contact_area, print_height,
         )
     return tuple(files)
+
+
+def stage_assembly(parts: tuple[PlacedPart, ...], path: Path) -> Path:
+    """Write named occurrences as one STEP and verify the imported assembly."""
+    expected = {}
+    for part in parts:
+        # STEP component names live on the geometric definitions, so give identical hardware its own definition.
+        placed = deepcopy(part.local_shape).moved(part.assembly_pose)
+        placed.label = part.spec.output_stem
+        if not placed.is_valid or len(placed.solids()) != 1 or placed.label in expected:
+            raise ExportError(f"装配零件无效或重名：{placed.label}")
+        expected[placed.label] = placed
+    if not export_step(Compound(children=list(expected.values()), label=path.stem), path):
+        raise ExportError("装配 STEP 写入失败")
+
+    children = import_step(path).children
+    actual = {child.label: child for child in children}
+    if len(children) != len(expected) or actual.keys() != expected.keys():
+        raise ExportError("装配 STEP 回读后的零件名称或数量不一致")
+    frame_points = (Pos(), Pos(1, 0, 0), Pos(0, 1, 0), Pos(0, 0, 1))
+    for name, placed in expected.items():
+        reread = actual[name]
+        bounds, imported = placed.bounding_box(), reread.bounding_box()
+        pose_error = max(
+            ((reread.location * point).position - (placed.location * point).position).length
+            for point in frame_points
+        )
+        if (
+            not reread.is_valid or len(reread.solids()) != 1 or abs(reread.volume - placed.volume) > 0.01
+            or (imported.min - bounds.min).length > 0.001 or (imported.max - bounds.max).length > 0.001
+            or pose_error > 0.001
+        ):
+            raise ExportError(f"装配 STEP 回读后的零件或位姿不一致：{name}")
+    return path

@@ -1,6 +1,6 @@
 # Argus 舵机云台建模
 
-Argus 用 build123d 参数化生成支架、底座和云台头。尺寸、草图轮廓和装配位姿定义在 `src/argus/models/` 下各零件子包的 `parameters.py` 中。修改对应参数后重新运行主命令即可导出。
+Argus 用 build123d 参数化生成支架、底座、云台头和舵盘。尺寸和装配位姿定义在 `src/argus/models/` 下各零件子包中。修改对应参数后重新运行主命令即可导出。
 
 ## 运行
 
@@ -11,11 +11,23 @@ poetry install
 poetry run argus
 ```
 
-主命令直接使用 Python 参数，在 `model-bin/parametric-parts` 中生成 `gimbal_bracket`、`gimbal_base` 和 `gimbal_head` 的 STEP 和 3MF。STEP 使用代码定义的装配位姿，3MF 按打印朝向居中贴床。该流程可以在没有源 STEP 的环境运行。
+主命令直接使用 Python 参数，在 `model-bin/parametric-parts` 中生成支架、分体底座、云台头和两处装配所用舵盘的 STEP 和 3MF，分体底座也同时生成 STL。STEP 使用代码定义的装配位姿，3MF 和 STL 按打印朝向居中贴床。该流程可以在没有源 STEP 的环境运行。
+
+分体底座把舵盘四臂夹在上下两层之间。默认使用 PETG 卡扣，两侧悬臂从下座边缘的释放口按入后可解扣，另有两处刚性定位键承担上下层相对转动时的载荷。每侧扣头宽 6.0 mm，默认单边间隙 0.25 mm 时咬合 0.65 mm。上盖的外表面平贴打印平台，使卡臂沿打印层展开。实际间隙和带载换向后的松动情况需通过试打确认。装配时先将舵盘放入下座并合盖，再从上方放入舵机，通过下座中央的 Ø4.8 mm 工具通道拧紧舵机原有的中心螺钉。
+
+用 `poetry run argus --split-base` 单独导出上下层，用 `poetry run argus --sg90s` 导出按所选底部舵盘适配输出轴的 SG90S，用 `poetry run argus --assembly` 导出保留零件名称和位姿的 `argus_gimbal_assembly.step`。加入 `--base-connection m3` 可切换到四颗 M3×6 螺栓和 M3×3×Ø4.2 热熔螺母连接。M3 版热熔底孔为 Ø4.0 mm、深 4.2 mm，可按螺母和试熔尺寸调整。底部可用 `--horn-profile equal` 切换为等臂舵盘。整机的两颗舵机按各自舵盘的花键尺寸生成，网页独立舵机采用仓库参考轴的尺寸。原装配中上部舵机与云台头的配合面有约 0.25 mm 的几何重叠，本版沿用这处装配关系。
 
 底座的底板和两组安装孔共用卡环中心。每组孔的 `offset` 表示一个孔相对中心的 XY 偏移，程序按 90° 旋转生成该组四个孔。
 
-支架以局部 `X=0` 为左右对称面，安装框、双臂、减重窗和卡片由单侧轮廓生成。安装窗以框体为中心，卡片按 `tab_pitch` 上下排列。左侧定位销和右侧轴孔共用 `shaft_axis` 定义的轴线，分别使用各自的配合尺寸。
+舵盘槽底盘共用 42 × 42 mm 的底板和 30 mm 的四角安装孔距，凹槽与固定孔按选择的舵盘生成。默认长短臂舵盘采用 33.58 mm 长跨距、2.25 mm 臂厚、4.62 mm 总厚、Ø6.74 mm 凸台、Ø1.45 mm 臂孔和 Ø2.36 mm 中心孔。短向跨距按图估为 19.8 mm，未标注的孔距按图估算，端孔间距采用标注的 2.43 mm。底盘默认板厚 6.2 mm，槽单边留 0.2 mm，以长臂倒数第二孔和短臂外孔为固定孔位。
+
+两款舵盘均可单独预览和导出。长短臂的内花键暂沿用 20 齿，以图示 Ø4.65 mm 作为齿顶径试装值。等臂 MG90S 版为 26.25 mm 等臂十字，内花键沿用仓库参考轴的 20 齿、Ø4.80 mm 齿顶径和 Ø4.10 mm 齿根径。实物花键配合以试装为准。
+
+运行 `poetry run argus --base-servo --servo-horn` 单独导出默认底盘和长短臂舵盘，文件名分别为 `gimbal_base_servo` 和 `servo_horn_long`。加上 `--horn-profile equal` 可切换至等臂底盘和 `mg90s_servo_horn`。
+
+支架以局部 `X=0` 为左右对称面，安装框、双臂、减重窗和卡片由单侧轮廓生成。左侧定位销和右侧凸台通孔共用 `shaft_axis`。右臂外侧按单臂舵盘的 21.3 mm 总长、2.08 mm 臂厚和 Ø6.76 mm 凸台生成凹槽，默认槽深 2.30 mm、单边间隙 0.20 mm，固定孔对应舵盘倒数第二个臂孔。
+
+单臂舵盘总厚 4.82 mm，中心通孔 Ø2.36 mm，臂孔 Ø1.45 mm，端部两孔间距 2.43 mm。外轮廓以总长 21.3 mm 和凸台 Ø6.76 mm 为准。图中未标注的臂端宽度和中间孔距按图估算。内花键以图示 Ø4.54 mm 作为名义齿顶径，齿数暂用仓库的 20 齿，实物配合以试装为准。工作台可打开 `/models/servo-horn-single`，或用 `poetry run argus --single-horn` 单独导出。
 
 打印支架复用原支架的参数和装配位姿。两臂下方及前框下方补实到圆端最低点，安装窗、减重窗和轴孔保留。运行 `poetry run argus --bracket-print` 单独导出 `gimbal_bracket_print.step` 和 `gimbal_bracket_print.3mf`。3MF 沿用原支架的安装面贴床朝向。
 
@@ -40,7 +52,9 @@ pnpm --dir src/web run build
 poetry run uvicorn argus.web.app:app --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://127.0.0.1:8000/` 默认进入底座。底座、支架和云台头可通过 `/models/base`、`/models/bracket` 和 `/models/head` 访问，打印版本对应 `/models/bracket-print` 和 `/models/head-print`。切换零件与浏览器前进、后退同步。
+打开 `http://127.0.0.1:8000/` 默认进入「分体底座」`/models/base-split`。参数面板的「连接方式」默认选中「PETG 卡扣」，可切换到「M3 热熔螺母」。调整参数后点击「重新生成」，即可查看闭合底座、上盖或下座。「整机装配」`/models/gimbal-assembly` 与分体底座共用同一份参数和已生成结果。上下层可分别导出 STEP、3MF 或 STL，整机可导出 STEP。
+
+单体舵盘槽底盘保留在 `/models/base-servo`，原底座在 `/models/base`。两款舵盘分别在 `/models/servo-horn-long` 和 `/models/servo-horn`，SG90S 舵机在 `/models/sg90s`。支架和云台头继续使用 `/models/bracket` 和 `/models/head`，打印版在 `/models/bracket-print` 和 `/models/head-print`。
 
 修改常用尺寸后点击「重新生成」，生成成功会替换视口里的结果。各零件的参数草稿和预览结果保存在当前网页会话，刷新后留在当前零件，从 Python 默认参数重新开始。
 

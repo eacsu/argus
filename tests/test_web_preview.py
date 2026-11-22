@@ -28,7 +28,10 @@ class TestWebPreview(unittest.TestCase):
 
     def test_default_previews_are_indexed_meshes(self):
         catalog = self.client.get("/api/models").json()["models"]
-        self.assertEqual([model["id"] for model in catalog], ["base", "bracket", "bracket-print", "head", "head-print"])
+        self.assertEqual([model["id"] for model in catalog], [
+            "base-split", "gimbal-assembly", "base-servo", "servo-horn-long", "servo-horn", "servo-horn-single", "sg90s",
+            "base", "bracket", "bracket-print", "head", "head-print",
+        ])
         for model in catalog:
             with self.subTest(model=model["id"]):
                 response = self.preview(model["id"], {})
@@ -38,14 +41,27 @@ class TestWebPreview(unittest.TestCase):
                 self.assertEqual(
                     payload["parameters"], {field["key"]: field["default"] for field in model["fields"]},
                 )
-                vertices = payload["mesh"]["positions"]
-                indices = payload["mesh"]["indices"]
-                self.assertGreater(len(vertices), 0)
-                self.assertGreater(len(indices), 0)
-                self.assertEqual(len(vertices) % 3, 0)
-                self.assertEqual(len(indices) % 3, 0)
-                self.assertGreaterEqual(min(indices), 0)
-                self.assertLess(max(indices), len(vertices) // 3)
+                if model["id"] in ("base-split", "gimbal-assembly"):
+                    self.assertEqual(len({part["id"] for part in payload["parts"]}), 8)
+                    meshes = [part["mesh"] for part in payload["parts"]]
+                else:
+                    meshes = [payload["mesh"]]
+                for mesh in meshes:
+                    vertices, indices = mesh["positions"], mesh["indices"]
+                    self.assertGreater(len(vertices), 0)
+                    self.assertGreater(len(indices), 0)
+                    self.assertEqual(len(vertices) % 3, 0)
+                    self.assertEqual(len(indices) % 3, 0)
+                    self.assertGreaterEqual(min(indices), 0)
+                    self.assertLess(max(indices), len(vertices) // 3)
+
+    def test_split_base_rejects_incorrect_screw_engagement(self):
+        response = self.preview("base-split", {"connection": 1, "bolt_length": 5})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("bolt_length", response.json()["detail"]["fields"])
+        response = self.preview("base-split", {"bolt_length": 5, "snap_clearance": 0.3})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["parameters"]["snap_clearance"], 0.3)
 
     def test_field_and_geometry_errors(self):
         self.assertEqual(self.preview("missing", {}).status_code, 404)
@@ -79,6 +95,41 @@ class TestWebPreview(unittest.TestCase):
         x, y = BASE_PARAMETERS.ring.center
         rotated = Pos(x, y, 0) * Rot(0, 0, 90) * Pos(-x, -y, 0) * profile
         self.assertLess(sum(face.area for face in profile.cut(rotated).faces()), 1e-6)
+
+    def test_servo_base_regenerates_and_rejects_insufficient_floor_thickness(self):
+        response = self.preview("base-servo", {"plate_side": 46, "clearance": 0.3})
+        self.assertEqual(response.status_code, 200)
+        bounds = response.json()["bounds"]
+        self.assertAlmostEqual(bounds["max"][0] - bounds["min"][0], 46)
+        response = self.preview("base-servo", {"plate_thickness": 5.2})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("plate_thickness", response.json()["detail"]["fields"])
+
+    def test_selecting_a_horn_changes_the_base_pocket_and_uses_matching_defaults(self):
+        long = self.preview("base-servo", {})
+        equal = self.preview("base-servo", {"horn_profile": 0})
+        self.assertEqual((long.status_code, equal.status_code), (200, 200))
+        self.assertEqual(long.json()["parameters"]["span"], 33.58)
+        self.assertEqual(equal.json()["parameters"]["span"], 26.25)
+        self.assertNotEqual(long.json()["mesh"], equal.json()["mesh"])
+        for invalid in (0.5, 2, True, "long"):
+            response = self.preview("base-servo", {"horn_profile": invalid})
+            self.assertEqual(response.status_code, 422)
+            self.assertIn("horn_profile", response.json()["detail"]["fields"])
+
+    def test_servo_horn_regenerates_and_rejects_invalid_socket_dimensions(self):
+        response = self.preview("servo-horn", {"arm_hole_diameter": 1.4, "clearance": 0.1})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["parameters"]["clearance"], 0.1)
+        for parameters, field in (
+            ({"minor_diameter": 4.9}, "minor_diameter"),
+            ({"major_diameter": 5.8, "clearance": 0.2}, "major_diameter"),
+            ({"depth": 3.5}, "depth"),
+        ):
+            with self.subTest(field=field):
+                response = self.preview("servo-horn", parameters)
+                self.assertEqual(response.status_code, 422)
+                self.assertIn(field, response.json()["detail"]["fields"])
 
     def test_shorter_bracket_pin_and_changed_head_bore(self):
         for model in ("bracket", "bracket-print"):

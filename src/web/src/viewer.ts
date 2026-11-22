@@ -30,9 +30,21 @@ export function createViewer(canvas: HTMLCanvasElement) {
   orbit.maxZoom = 8
   orbit.listenToKeyEvents(canvas)
   const object = new Group()
-  const material = new MeshStandardMaterial({
-    color: color('--accent'), roughness: 0.65, metalness: 0.08,
+  const material = (token: string) => new MeshStandardMaterial({
+    color: color(token), roughness: 0.65, metalness: 0.08,
   })
+  const materials = {
+    model: material('--accent'), upper: material('--accent-muted'), servo: material('--text-secondary'),
+    horn: material('--av-verdigris-frost'), bolt: material('--text-tertiary'), insert: material('--av-warning'),
+  }
+  function partMaterial(id: string) {
+    if (id === 'gimbal_base_upper') return materials.upper
+    if (id.startsWith('sg90s_')) return materials.servo
+    if (id.includes('servo_horn')) return materials.horn
+    if (id.startsWith('m3_bolt')) return materials.bolt
+    if (id.startsWith('m3_insert')) return materials.insert
+    return materials.model
+  }
   const outlineMaterial = new LineBasicMaterial({
     color: color('--text-secondary'), transparent: true, opacity: 0.40,
   })
@@ -45,8 +57,6 @@ export function createViewer(canvas: HTMLCanvasElement) {
   scene.add(object, grid, key, fill, new AmbientLight(color('--surface'), 1.2))
   const center = new Vector3()
   let span = 65
-  let mesh: Mesh | undefined
-  let lines: LineSegments | undefined
   let currentModel: Preview['model'] | undefined
 
   const draw = () => renderer.render(scene, camera)
@@ -82,16 +92,10 @@ export function createViewer(canvas: HTMLCanvasElement) {
   }
 
   function clearMesh() {
-    if (mesh) {
-      object.remove(mesh)
-      mesh.geometry.dispose()
-      mesh = undefined
+    for (const child of object.children) {
+      if (child instanceof Mesh || child instanceof LineSegments) child.geometry.dispose()
     }
-    if (lines) {
-      object.remove(lines)
-      lines.geometry.dispose()
-      lines = undefined
-    }
+    object.clear()
   }
 
   function setPreview(preview: Preview | undefined) {
@@ -100,13 +104,14 @@ export function createViewer(canvas: HTMLCanvasElement) {
       draw()
       return
     }
-    const geometry = new BufferGeometry()
-    geometry.setAttribute('position', new Float32BufferAttribute(preview.mesh.positions, 3))
-    geometry.setIndex(preview.mesh.indices)
-    geometry.computeVertexNormals()
-    mesh = new Mesh(geometry, material)
-    lines = new LineSegments(new EdgesGeometry(geometry, 32), outlineMaterial)
-    object.add(mesh, lines)
+    const parts = preview.parts ?? (preview.mesh ? [{ id: '', mesh: preview.mesh }] : [])
+    for (const { id, mesh } of parts) {
+      const geometry = new BufferGeometry()
+      geometry.setAttribute('position', new Float32BufferAttribute(mesh.positions, 3))
+      geometry.setIndex(mesh.indices)
+      geometry.computeVertexNormals()
+      object.add(new Mesh(geometry, partMaterial(id)), new LineSegments(new EdgesGeometry(geometry, 32), outlineMaterial))
+    }
     const minimum = new Vector3(...preview.bounds.min)
     const maximum = new Vector3(...preview.bounds.max)
     center.addVectors(minimum, maximum).multiplyScalar(0.5)
@@ -140,7 +145,7 @@ export function createViewer(canvas: HTMLCanvasElement) {
       orbit.removeEventListener('change', draw)
       orbit.dispose()
       clearMesh()
-      material.dispose()
+      Object.values(materials).forEach((surface) => surface.dispose())
       outlineMaterial.dispose()
       grid.dispose()
       renderer.dispose()

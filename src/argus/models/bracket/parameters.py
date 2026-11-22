@@ -3,6 +3,7 @@
 from build123d import Location
 
 from argus.models.bracket import BracketParameters
+from argus.models.bracket.horn_seat import HornSeat
 from argus.models.common import Outline, Prism, RoundCut
 
 
@@ -89,34 +90,5 @@ BRACKET_PARAMETERS = BracketParameters(
     shaft_axis=(31.0558412939, -40.0),
     pin_radius=2.0,
     pin_depth=2.0,
-    bearing_radius=2.65,
-    side_bore_center=(25.9602580142, -26.0),
-    side_bore_radius=1.0,
-    collar=Prism(
-        outline=yz_profile(
-            vertices=(
-                (24.0060570288, -26.4255567047),
-                (27.1474393232, -40.8511134094),
-                (34.596936059, -38.1397183373),
-                (27.7308053967, -25.0698591687),
-            ),
-            arcs=(
-                (1, (32.4239218672, -43.7587704831)),
-                (3, (25.2762177275, -24.1206147584)),
-            ),
-        ),
-        direction=(2.0, 0.0, 0.0),
-        holes=(yz_profile(
-            vertices=(
-                (24.2014771274, -26.3830010342),
-                (27.5537506585, -25.1628732518),
-                (34.4198813208, -38.2327324205),
-                (27.3428594218, -40.808557739),
-            ),
-            arcs=(
-                (0, (25.3446217562, -24.3085532826)),
-                (2, (32.3555178385, -43.570831959)),
-            ),
-        ),),
-    ),
+    horn_seat=HornSeat(),
 )

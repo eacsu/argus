@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore, type MouseEvent } from 'react'
 import type { ModelId } from './preview'
 
 const routeChange = 'argus:routechange'
+export const DEFAULT_MODEL: ModelId = 'base-split'
 
 export function modelPath(id: ModelId) {
   return '/models/' + id
@@ -20,11 +21,11 @@ export function useModelPath() {
   const pathname = useSyncExternalStore(subscribePath, () => window.location.pathname)
   useEffect(() => {
     if (pathname !== '/' || window.location.pathname !== '/') return
-    const path = modelPath('base') + window.location.search + window.location.hash
+    const path = modelPath(DEFAULT_MODEL) + window.location.search + window.location.hash
     window.history.replaceState(window.history.state, '', path)
     window.dispatchEvent(new Event(routeChange))
   }, [pathname])
-  return pathname === '/' ? modelPath('base') : pathname.replace(/\/$/, '')
+  return pathname === '/' ? modelPath(DEFAULT_MODEL) : pathname.replace(/\/$/, '')
 }
 
 export function followModelLink(event: MouseEvent<HTMLAnchorElement>) {

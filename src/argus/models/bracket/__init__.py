@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from build123d import Plane, Pos, Shape
 
+from argus.models.bracket.horn_seat import HornSeat
 from argus.models.common import X, Outline, Prism, RoundCut, cylinder
 
 
@@ -32,10 +33,11 @@ class BracketParameters:
     shaft_axis: Point2D
     pin_radius: float
     pin_depth: float
-    bearing_radius: float
-    side_bore_center: Point2D
-    side_bore_radius: float
-    collar: Prism
+    horn_seat: HornSeat
+
+    @property
+    def right_arm_x(self) -> float:
+        return -min(x for x, _ in self.frame_half)
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ class BracketFeatures:
     shoulder_trim: Shape | None
     chamfer: Shape
     chamfer_mask: Shape
+    horn_cutouts: tuple[Shape, ...] = ()
 
 
 def _symmetric_profile(left: tuple[Point2D, ...], z: float) -> Outline:
@@ -71,8 +74,8 @@ def build_bracket(parameters: BracketParameters):
 
 
 def resolve_bracket_features(parameters: BracketParameters) -> BracketFeatures:
-    left_x = min(x for x, _ in parameters.frame_half)
-    right_x = -left_x
+    right_x = parameters.right_arm_x
+    left_x = -right_x
     frame_bottom = -parameters.frame_height
     mid_z = frame_bottom / 2
     frame_midplane = Plane((0, 0, mid_z))
@@ -94,7 +97,7 @@ def resolve_bracket_features(parameters: BracketParameters) -> BracketFeatures:
     arm = _x_prism(parameters.arm, left_x, parameters.arm_thickness)
     cut_depth = parameters.arm_thickness + 2 * CUT_OVERLAP
     arm_window = _x_prism(parameters.arm_window, left_x - CUT_OVERLAP, cut_depth)
-    right_cutter_x = right_x - parameters.arm_thickness - CUT_OVERLAP
+    collar, horn_cutouts = parameters.horn_seat.features(right_x, parameters.arm_thickness, parameters.shaft_axis)
     tab = parameters.tab.build()
     right_tab = tab.mirror(Plane.YZ)
     next_tab_row = Pos(0, 0, parameters.tab_pitch)
@@ -112,16 +115,12 @@ def resolve_bracket_features(parameters: BracketParameters) -> BracketFeatures:
         window=window,
         tabs=(tab, right_tab, tab.moved(next_tab_row), right_tab.moved(next_tab_row)),
         arms=(arm, arm.mirror(Plane.YZ)),
-        arm_cutouts=(
-            arm_window, arm_window.mirror(Plane.YZ),
-            cylinder(parameters.bearing_radius, (right_cutter_x, *parameters.shaft_axis), X, cut_depth),
-            cylinder(parameters.side_bore_radius, (right_cutter_x, *parameters.side_bore_center), X, cut_depth),
-        ),
+        arm_cutouts=(arm_window, arm_window.mirror(Plane.YZ)),
         pin=cylinder(
             parameters.pin_radius, (left_x - parameters.pin_depth, *parameters.shaft_axis),
             X, parameters.pin_depth + CUT_OVERLAP,
         ),
-        collar=parameters.collar.build().moved(Pos(right_x, 0, 0)),
+        collar=collar,
         rounds=(
             front_round, front_round.mirror(frame_midplane),
             shoulder_round, shoulder_round.mirror(Plane.YZ),
@@ -129,6 +128,7 @@ def resolve_bracket_features(parameters: BracketParameters) -> BracketFeatures:
         shoulder_trim=_x_prism(parameters.shoulder_trim, left_x, right_x - left_x),
         chamfer=_x_prism(parameters.chamfer, left_x, right_x - left_x),
         chamfer_mask=chamfer_mask,
+        horn_cutouts=horn_cutouts,
     )
 
 
@@ -140,8 +140,15 @@ def build_bracket_features(features: BracketFeatures):
         part -= opening
     part += features.pin
     part += features.collar
+    part = cut_horn_seat(part, features.horn_cutouts)
     for rounding in features.rounds:
         part -= rounding
     if features.shoulder_trim is not None:
         part -= features.shoulder_trim
     return part - (features.chamfer & features.chamfer_mask)
+
+
+def cut_horn_seat(part: Shape, cutouts: tuple[Shape, ...]) -> Shape:
+    for opening in cutouts:
+        part -= opening
+    return part

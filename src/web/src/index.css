@@ -43,10 +43,19 @@ h1, h2, p { margin: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 48px;
+  padding: 0 48px 0 24px;
   border-bottom: 1px solid var(--border);
 }
-.brand-name { font-family: var(--font-latin); font-size: 24px; line-height: 29px; font-weight: 600; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 22px/28px var(--font-latin);
+}
+.brand img {
+  /* Align the left edge of the artwork with the navigation labels. */
+  margin-inline-start: -3px;
+}
 .workspace-name { color: var(--text-secondary); font-size: 13px; line-height: 16px; }
 
 .workspace { min-height: calc(100dvh - 56px); display: grid; grid-template-columns: 176px minmax(0, 1fr); }
@@ -95,6 +104,8 @@ h1, h2, p { margin: 0; }
   border-top: 1px solid var(--border);
 }
 .preview-area { display: flex; flex-direction: column; min-width: 0; }
+.assembly-views { display: flex; gap: 4px; padding-block: 4px; border-bottom: 1px solid var(--border); }
+.assembly-views [aria-pressed='true'] { background: var(--selected); }
 .viewer { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .viewer-tools {
   min-height: 40px;
@@ -226,7 +237,18 @@ h1, h2, p { margin: 0; }
 .number-field input::-webkit-outer-spin-button, .number-field input::-webkit-inner-spin-button { appearance: none; margin: 0; }
 .number-field input:focus-visible { outline: none; }
 .number-field span { font: 12px/14px var(--font-latin); color: var(--text-secondary); }
-.parameter-group:disabled .number-field { background: var(--bg-secondary); }
+.choice-field {
+  min-width: 0;
+  height: var(--control-compact-height);
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--av-radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+.choice-field[aria-invalid='true'] { border-color: var(--av-danger); }
+.parameter-group:disabled :is(.number-field, .choice-field) { background: var(--bg-secondary); }
 .field-error { color: var(--text-primary); line-height: 1.5; font-size: 12px; margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--av-danger); }
 .inspector-footer { margin-top: auto; padding-top: 7px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; }
 
