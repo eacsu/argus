@@ -3,13 +3,19 @@ name = "argus"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Your Name",email = "you@example.com"}
+    {name = "eacsu",email = "eacsu@eacsu.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.11, <3.13"
 dependencies = [
-    "build123d (>=0.13.0,<0.14.0)"
+    "build123d (>=0.13.0,<0.14.0)",
+    "typer (>=0.16,<1)",
+    "filelock (>=3.20.3,<4)",
+    "fastapi[standard] (>=0.141,<1)"
 ]
+
+[project.scripts]
+argus = "argus.commands.app:app"
 
 [tool.poetry]
 packages = [{include = "argus", from = "src"}]

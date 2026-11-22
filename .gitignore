@@ -134,6 +134,8 @@ venv.bak/
 node_modules/
 src/web/node_modules/
 src/web/dist/
+src/web/test-results/
+src/web/playwright-report/
 .pnpm-store/
 .npm/
 pnpm-debug.log*

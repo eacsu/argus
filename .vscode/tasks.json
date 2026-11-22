@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "web: install",
+      "type": "process",
+      "command": "pnpm",
+      "args": ["install", "--frozen-lockfile"],
+      "options": {
+        "cwd": "${workspaceFolder}/src/web"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "web: build",
+      "type": "process",
+      "command": "pnpm",
+      "args": ["run", "build"],
+      "dependsOn": "web: install",
+      "options": {
+        "cwd": "${workspaceFolder}/src/web"
+      },
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    }
+  ]
+}
